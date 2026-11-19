@@ -1,0 +1,9 @@
+[package]
+name = "core-tts"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+tracing.workspace = true
+tts.workspace = true

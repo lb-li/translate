@@ -1,0 +1,43 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core-capture",
+    "crates/core-translate",
+    "crates/core-tts",
+    "crates/core-storage",
+    "crates/app-ui",
+]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+authors = ["Lumen Translate Contributors"]
+
+[workspace.dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+futures = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.44", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Windows & Desktop ecosystem
+arboard = "3.5"
+global-hotkey = "0.7"
+tray-icon = "0.26"
+tts = "0.26"
+uiautomation = "0.25"
+rusqlite = { version = "0.35", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "http2"] }
+
+# GPUI Kit re-exports matching gpui + gpui-component versions to avoid duplicate crate conflicts
+gpui-kit = "0.9"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
