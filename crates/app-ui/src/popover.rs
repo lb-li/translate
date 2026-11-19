@@ -6,7 +6,7 @@ use core_tts::{HybridTtsEngine, TtsTier};
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::gpui::{
     div, prelude::*, px, svg, Context, FocusHandle, FontWeight, IntoElement, KeyDownEvent, Render,
-    ScrollHandle, Window, WindowAppearance,
+    Rgba, ScrollHandle, Window, WindowAppearance,
 };
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -16,6 +16,10 @@ use tokio::sync::mpsc;
 pub enum SpokenTarget {
     Source,
     Translated,
+}
+
+fn icon(data: &'static [u8], size: f32, color: Rgba) -> impl IntoElement {
+    svg().data(data).size(px(size)).text_color(color)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -291,6 +295,8 @@ impl Render for TranslatorPopover {
         let mut card_bg = palette.window;
         card_bg.a = (0xF2 as f32 * self.anim_opacity).clamp(0.0, 255.0) / 255.0;
         let is_speaking = self.last_spoken.is_some() && self.tts.is_speaking();
+        let source_is_speaking =
+            self.last_spoken == Some(SpokenTarget::Source) && self.tts.is_speaking();
         let (status_label, status_color) = match self.status {
             ViewStatus::Ready => ("就绪", palette.muted),
             ViewStatus::Streaming => ("翻译中", palette.accent),
@@ -467,15 +473,19 @@ impl Render for TranslatorPopover {
                                             .store(this.is_pinned, Ordering::Relaxed);
                                         cx.notify();
                                     }))
-                                    .child(
-                                        svg()
-                                            .data(if self.is_pinned {
-                                                icons::PIN_ON
-                                            } else {
-                                                icons::PIN_OFF
-                                            })
-                                            .size(px(13.0)),
-                                    ),
+                                    .child(icon(
+                                        if self.is_pinned {
+                                            icons::PIN_ON
+                                        } else {
+                                            icons::PIN_OFF
+                                        },
+                                        13.0,
+                                        if self.is_pinned {
+                                            palette.accent
+                                        } else {
+                                            palette.muted
+                                        },
+                                    )),
                             )
                             .child(
                                 div()
@@ -491,7 +501,7 @@ impl Render for TranslatorPopover {
                                     .on_click(cx.listener(|this, _event, _window, _cx| {
                                         let _ = this.cmd_tx.send(UiCommand::HideToTray);
                                     }))
-                                    .child(svg().data(icons::CLOSE).size(px(13.0))),
+                                    .child(icon(icons::CLOSE, 13.0, palette.muted)),
                             ),
                     ),
             )
@@ -509,7 +519,39 @@ impl Render for TranslatorPopover {
                             .flex_shrink_0()
                             .min_h(px(40.0))
                             .py(px(4.0))
-                            .child(source_block),
+                            .flex()
+                            .items_start()
+                            .gap(px(6.0))
+                            .child(div().flex_1().min_w(px(0.0)).child(source_block))
+                            .child(
+                                div()
+                                    .id("speak-source")
+                                    .mt(px(1.0))
+                                    .size(px(24.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(px(6.0))
+                                    .cursor_pointer()
+                                    .text_color(if source_is_speaking {
+                                        palette.accent
+                                    } else {
+                                        palette.muted
+                                    })
+                                    .hover(|style| style.bg(palette.hover))
+                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                        this.toggle_speech(SpokenTarget::Source, cx);
+                                    }))
+                                    .child(icon(
+                                        icons::SPEAKER,
+                                        14.0,
+                                        if source_is_speaking {
+                                            palette.accent
+                                        } else {
+                                            palette.muted
+                                        },
+                                    )),
+                            ),
                     )
                     .child(
                         div()
@@ -569,15 +611,15 @@ impl Render for TranslatorPopover {
                                         };
                                         this.toggle_speech(target, cx);
                                     }))
-                                    .child(
-                                        svg()
-                                            .data(if is_speaking {
-                                                icons::STOP
-                                            } else {
-                                                icons::PLAY
-                                            })
-                                            .size(px(14.0)),
-                                    ),
+                                    .child(icon(
+                                        if is_speaking {
+                                            icons::STOP
+                                        } else {
+                                            icons::PLAY
+                                        },
+                                        14.0,
+                                        palette.on_accent,
+                                    )),
                             )
                             .child(self.waveform(palette))
                             .child(
@@ -639,15 +681,19 @@ impl Render for TranslatorPopover {
                                             });
                                         }
                                     }))
-                                    .child(
-                                        svg()
-                                            .data(if self.is_favorite {
-                                                icons::STAR_ON
-                                            } else {
-                                                icons::STAR
-                                            })
-                                            .size(px(14.0)),
-                                    ),
+                                    .child(icon(
+                                        if self.is_favorite {
+                                            icons::STAR_ON
+                                        } else {
+                                            icons::STAR
+                                        },
+                                        14.0,
+                                        if self.is_favorite {
+                                            palette.teal
+                                        } else {
+                                            palette.muted
+                                        },
+                                    )),
                             )
                             .child(
                                 div()
@@ -668,15 +714,19 @@ impl Render for TranslatorPopover {
                                     .on_click(cx.listener(|this, _event, _window, cx| {
                                         this.copy_translation(cx);
                                     }))
-                                    .child(
-                                        svg()
-                                            .data(if self.copied {
-                                                icons::CHECK
-                                            } else {
-                                                icons::COPY
-                                            })
-                                            .size(px(13.0)),
-                                    )
+                                    .child(icon(
+                                        if self.copied {
+                                            icons::CHECK
+                                        } else {
+                                            icons::COPY
+                                        },
+                                        13.0,
+                                        if self.copied {
+                                            palette.teal
+                                        } else {
+                                            palette.secondary
+                                        },
+                                    ))
                                     .child(div().text_size(px(10.0)).child(if self.copied {
                                         "已复制"
                                     } else {
