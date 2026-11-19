@@ -1,5 +1,8 @@
 pub mod providers;
 
+pub use providers::google_free::GoogleTranslateFreeProvider;
+pub use providers::openai_compat::OpenAiCompatProvider;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use tokio::sync::mpsc;

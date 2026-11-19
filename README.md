@@ -14,9 +14,14 @@
    - **本地编译**：在安装了 Rust MSVC 与 VS Build Tools 2022 的 Windows 上运行 `.\build-windows.ps1`，产物位于 `dist\lumen-translate.exe`。
    - **云端零环境编译**：将本目录推送到 GitHub 仓库，触发自带的 `.github/workflows/build-windows.yml`，约 3 分钟后直接在 Actions 页面下载编译好的 `lumen-translate.exe`。
 
-## 可选 API 配置
+## 翻译与语音服务说明
 
-未设置环境变量时默认进入本地演示模式（可直接测试划词捕获、光标跟随、托盘显隐与 WinRT 朗读）：
+- **免费开箱即用（默认）**：
+  - **翻译服务**：默认内置 Google 免费翻译通道（免 API Key，支持中英双向自动语种识别）。无需配置任何环境变量即可使用。
+  - **语音服务**：基于 Windows 原生语音引擎（SAPI / WinRT），支持智能语种检测与发音人匹配（检测到中文自动调用中文发音人，英文自动匹配英文发音人），支持原文/译文独立朗读与实时打断。
+
+- **可选：大模型翻译（配置环境变量）**：
+  若需使用 OpenAI、DeepSeek 等大模型流式翻译，可配置以下环境变量覆盖默认翻译引擎：
 
 ```powershell
 $env:LUMEN_API_BASE = "https://api.openai.com/v1"

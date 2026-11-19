@@ -3,13 +3,68 @@
 
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 use tokio::sync::mpsc;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub static IS_PINNED: AtomicBool = AtomicBool::new(false);
+static MOUSE_CMD_TX: OnceLock<mpsc::UnboundedSender<UiCommand>> = OnceLock::new();
+
+#[cfg(windows)]
+unsafe extern "system" fn low_level_mouse_proc(
+    code: i32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CallNextHookEx, GetWindowRect, MSLLHOOKSTRUCT, WM_LBUTTONDOWN, WM_NCLBUTTONDOWN,
+        WM_NCRBUTTONDOWN, WM_RBUTTONDOWN,
+    };
+
+    if code >= 0 {
+        let msg = wparam.0 as u32;
+        if msg == WM_LBUTTONDOWN
+            || msg == WM_RBUTTONDOWN
+            || msg == WM_NCLBUTTONDOWN
+            || msg == WM_NCRBUTTONDOWN
+        {
+            if !IS_PINNED.load(Ordering::Relaxed) {
+                if let Some(hwnd_raw) = crate::win_positioning::find_window_by_title(crate::POPOVER_TITLE) {
+                    if crate::win_positioning::is_popover_visible(hwnd_raw) {
+                        let hook_struct = &*(lparam.0 as *const MSLLHOOKSTRUCT);
+                        let click_pt = hook_struct.pt;
+
+                        let mut rc = RECT::default();
+                        let hwnd = windows::Win32::Foundation::HWND(hwnd_raw as *mut std::ffi::c_void);
+                        if GetWindowRect(hwnd, &mut rc).is_ok() {
+                            let inside = click_pt.x >= rc.left
+                                && click_pt.x <= rc.right
+                                && click_pt.y >= rc.top
+                                && click_pt.y <= rc.bottom;
+
+                            if !inside {
+                                if let Some(tx) = MOUSE_CMD_TX.get() {
+                                    let _ = tx.send(UiCommand::HideToTray);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    CallNextHookEx(None, code, wparam, lparam)
+}
+
+#[derive(Debug, Clone)]
 pub enum UiCommand {
     TriggerCapture,
+    OnCaptureFinished(Option<core_capture::CaptureResult>),
+    Retranslate(String),
     ToggleVisibility,
     HideToTray,
     StopTts,
@@ -51,6 +106,8 @@ fn build_default_tray_icon() -> Icon {
 
 /// 启动零轮询 Windows 后台事件线程：托管 Alt+Q 热键与系统托盘图标/右键菜单。
 pub fn spawn_tray_and_hotkey_thread(cmd_tx: mpsc::UnboundedSender<UiCommand>) {
+    let _ = MOUSE_CMD_TX.set(cmd_tx.clone());
+
     std::thread::spawn(move || {
         // 1. 注册全局快捷键 Alt + Q
         let hotkey_manager = match GlobalHotKeyManager::new() {
@@ -136,16 +193,30 @@ pub fn spawn_tray_and_hotkey_thread(cmd_tx: mpsc::UnboundedSender<UiCommand>) {
             }
         });
 
-        // 6. 运行原生 Win32 消息循环（GetMessageW 阻塞，无事件时 0% CPU）
+        // 6. 安装全局失焦外部点击钩子并运行原生 Win32 消息循环（GetMessageW 阻塞，无事件时 0% CPU）
         #[cfg(windows)]
         unsafe {
             use windows::Win32::UI::WindowsAndMessaging::{
-                DispatchMessageW, GetMessageW, TranslateMessage, MSG,
+                DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
+                UnhookWindowsHookEx, MSG, WH_MOUSE_LL,
             };
+
+            let mouse_hook = SetWindowsHookExW(
+                WH_MOUSE_LL,
+                Some(low_level_mouse_proc),
+                None,
+                0,
+            )
+            .ok();
+
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
+            }
+
+            if let Some(h) = mouse_hook {
+                let _ = UnhookWindowsHookEx(h);
             }
         }
 

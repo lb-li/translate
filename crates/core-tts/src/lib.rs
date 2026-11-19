@@ -25,7 +25,7 @@ impl HybridTtsEngine {
         match tier {
             TtsTier::SystemNative => self.native.speak(text, rate),
             TtsTier::OfflineNeural | TtsTier::CloudStreaming => {
-                tracing::info!(?tier, "当前自动回退至 L1 系统原生语音");
+                tracing::info!(?tier, "当前自动使用 L1 系统原生语音通道");
                 self.native.speak(text, rate)
             }
         }
@@ -33,5 +33,9 @@ impl HybridTtsEngine {
 
     pub fn stop(&self) -> Result<()> {
         self.native.stop()
+    }
+
+    pub fn is_speaking(&self) -> bool {
+        self.native.is_speaking()
     }
 }

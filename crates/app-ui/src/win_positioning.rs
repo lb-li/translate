@@ -93,7 +93,18 @@ pub fn apply_popover_ex_styles(hwnd_raw: isize) {
 pub fn apply_popover_ex_styles(_hwnd_raw: isize) {}
 
 #[cfg(windows)]
-pub fn show_popover_near_cursor(hwnd_raw: isize, popup_w: i32, popup_h: i32) {
+pub fn get_window_scale_factor(hwnd: windows::Win32::Foundation::HWND) -> f32 {
+    use windows::Win32::UI::HiDpi::GetDpiForWindow;
+    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    if dpi == 0 {
+        1.0
+    } else {
+        dpi as f32 / 96.0
+    }
+}
+
+#[cfg(windows)]
+pub fn show_popover_near_cursor(hwnd_raw: isize, logical_w: i32, logical_h: i32) {
     use std::ffi::c_void;
     use windows::Win32::Foundation::{HWND, POINT};
     use windows::Win32::Graphics::Gdi::{
@@ -104,6 +115,10 @@ pub fn show_popover_near_cursor(hwnd_raw: isize, popup_w: i32, popup_h: i32) {
     };
 
     let hwnd = HWND(hwnd_raw as *mut c_void);
+    let scale = get_window_scale_factor(hwnd);
+    let phys_w = (logical_w as f32 * scale).round() as i32;
+    let phys_h = (logical_h as f32 * scale).round() as i32;
+
     let mut pt = POINT::default();
     if unsafe { GetCursorPos(&mut pt) }.is_err() {
         return;
@@ -120,8 +135,8 @@ pub fn show_popover_near_cursor(hwnd_raw: isize, popup_w: i32, popup_h: i32) {
         clamp_to_work_area(
             pt.x,
             pt.y,
-            popup_w,
-            popup_h,
+            phys_w,
+            phys_h,
             work.left,
             work.top,
             work.right,
@@ -131,8 +146,8 @@ pub fn show_popover_near_cursor(hwnd_raw: isize, popup_w: i32, popup_h: i32) {
         PopoverRect {
             x: pt.x + 12,
             y: pt.y + 18,
-            width: popup_w,
-            height: popup_h,
+            width: phys_w,
+            height: phys_h,
         }
     };
 
@@ -150,17 +165,17 @@ pub fn show_popover_near_cursor(hwnd_raw: isize, popup_w: i32, popup_h: i32) {
 }
 
 #[cfg(not(windows))]
-pub fn show_popover_near_cursor(_hwnd_raw: isize, _popup_w: i32, _popup_h: i32) {}
+pub fn show_popover_near_cursor(_hwnd_raw: isize, _logical_w: i32, _logical_h: i32) {}
 
 #[cfg(windows)]
 pub fn hide_popover_to_tray(hwnd_raw: isize) {
     use std::ffi::c_void;
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+    use windows::Win32::UI::WindowsAndMessaging::{ShowWindowAsync, SW_HIDE};
 
     let hwnd = HWND(hwnd_raw as *mut c_void);
     unsafe {
-        let _ = ShowWindow(hwnd, SW_HIDE);
+        let _ = ShowWindowAsync(hwnd, SW_HIDE);
     }
 }
 
@@ -174,7 +189,9 @@ pub fn is_popover_visible(hwnd_raw: isize) -> bool {
     use windows::Win32::UI::WindowsAndMessaging::IsWindowVisible;
 
     let hwnd = HWND(hwnd_raw as *mut c_void);
-    unsafe { IsWindowVisible(hwnd).as_bool() }
+    unsafe {
+        IsWindowVisible(hwnd).as_bool()
+    }
 }
 
 #[cfg(not(windows))]
