@@ -68,7 +68,7 @@ pub fn is_foreground_terminal() -> bool {
 fn release_alt_keys() {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
-        VIRTUAL_KEY, VK_LMENU, VK_MENU, VK_RMENU,
+        VK_LMENU, VK_MENU, VK_RMENU,
     };
 
     let mut inputs = Vec::new();
