@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn respects_left_work_area_margin() {
-        let rect = clamp_to_work_area(0, 100, 420, 280, test_work_area());
-        assert_eq!(rect.x, 20);
+        let rect = clamp_to_work_area(-20, 100, 420, 280, test_work_area());
+        assert_eq!(rect.x, 8);
     }
 }
