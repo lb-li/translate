@@ -2,8 +2,12 @@ name: Build Windows EXE
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
+    tags: ["v*"]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-windows:
@@ -16,15 +20,22 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+          components: rustfmt, clippy
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Check Formatting
+        run: cargo fmt --all -- --check
+
       - name: Run Workspace Tests
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Build Release EXE
-        run: cargo build --release -p app-ui
+        run: cargo build --release -p app-ui --locked
 
       - name: Prepare Artifact
         shell: pwsh
@@ -37,3 +48,11 @@ jobs:
         with:
           name: lumen-translate-windows-x64
           path: dist/lumen-translate.exe
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Lumen Translate ${{ github.ref_name }}
+          files: dist/lumen-translate.exe
+          generate_release_notes: true

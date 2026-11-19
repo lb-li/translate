@@ -2,13 +2,14 @@
 name = "core-capture"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+authors.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-arboard.workspace = true
-tracing.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+arboard.workspace = true
 uiautomation.workspace = true
 windows = { version = "0.62", features = [
     "Win32_Foundation",

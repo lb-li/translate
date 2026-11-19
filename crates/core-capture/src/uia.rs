@@ -23,7 +23,11 @@ pub fn try_get_uia_selection() -> Option<String> {
         }
     }
 
-    if combined.is_empty() { None } else { Some(combined) }
+    if combined.is_empty() {
+        None
+    } else {
+        Some(combined)
+    }
 }
 
 #[cfg(not(windows))]

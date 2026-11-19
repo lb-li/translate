@@ -92,12 +92,14 @@ impl NativeWinTts {
             let _ = engine.set_voice(v);
         }
 
-        let target_rate = (engine.normal_rate() * rate_multiplier)
-            .clamp(engine.min_rate(), engine.max_rate());
+        let target_rate =
+            (engine.normal_rate() * rate_multiplier).clamp(engine.min_rate(), engine.max_rate());
         let _ = engine.set_rate(target_rate);
 
         // interrupt = true 确保立刻打断正在播放的内容
-        engine.speak(trimmed, true).map_err(|e| anyhow!("朗读失败: {}", e))?;
+        engine
+            .speak(trimmed, true)
+            .map_err(|e| anyhow!("朗读失败: {}", e))?;
         Ok(())
     }
 

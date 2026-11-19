@@ -1,4 +1,3 @@
-/// 清洗 PDF 论文及多栏文档中常见的硬换行与连字符断词。
 pub fn clean_selected_text(raw: &str) -> String {
     let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
     let mut out = String::with_capacity(normalized.len());
@@ -12,17 +11,13 @@ pub fn clean_selected_text(raw: &str) -> String {
             }
             continue;
         }
-
         let is_last = idx + 1 == lines.len();
         let next_is_empty = !is_last && lines[idx + 1].trim().is_empty();
-
         if !is_last && !next_is_empty && trimmed.ends_with('-') && trimmed.len() > 1 {
             out.push_str(&trimmed[..trimmed.len() - 1]);
             continue;
         }
-
         out.push_str(trimmed);
-
         if !is_last && !next_is_empty {
             let last_is_cjk = trimmed.chars().last().map(is_cjk).unwrap_or(false);
             let next_is_cjk = lines[idx + 1]
@@ -36,7 +31,6 @@ pub fn clean_selected_text(raw: &str) -> String {
             }
         }
     }
-
     out.trim().to_string()
 }
 
@@ -53,12 +47,26 @@ mod tests {
     #[test]
     fn joins_pdf_hyphenated_lines() {
         let raw = "High-perfor-\nmance desktop\ntranslation.";
-        assert_eq!(clean_selected_text(raw), "High-performance desktop translation.");
+        assert_eq!(
+            clean_selected_text(raw),
+            "High-performance desktop translation."
+        );
     }
 
     #[test]
     fn joins_cjk_lines_without_extra_spaces() {
         let raw = "高性能划词\n翻译工具";
         assert_eq!(clean_selected_text(raw), "高性能划词翻译工具");
+    }
+
+    #[test]
+    fn preserves_paragraph_boundaries() {
+        let raw = "第一段\n\n第二段";
+        assert_eq!(clean_selected_text(raw), "第一段\n\n第二段");
+    }
+
+    #[test]
+    fn normalizes_windows_newlines() {
+        assert_eq!(clean_selected_text("hello\r\nworld"), "hello world");
     }
 }

@@ -2,6 +2,8 @@
 name = "app-ui"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+authors.workspace = true
 
 [dependencies]
 anyhow.workspace = true
@@ -10,18 +12,22 @@ core-capture = { path = "../core-capture" }
 core-storage = { path = "../core-storage" }
 core-translate = { path = "../core-translate" }
 core-tts = { path = "../core-tts" }
-global-hotkey.workspace = true
 gpui-kit.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-tray-icon.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+global-hotkey.workspace = true
+image.workspace = true
+raw-window-handle.workspace = true
+tray-icon.workspace = true
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_System_Threading",
     "Win32_UI_HiDpi",
     "Win32_UI_WindowsAndMessaging",
 ] }

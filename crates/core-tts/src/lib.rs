@@ -1,3 +1,7 @@
+#[cfg(windows)]
+pub mod native_win;
+#[cfg(not(windows))]
+#[path = "native_stub.rs"]
 pub mod native_win;
 
 use anyhow::Result;

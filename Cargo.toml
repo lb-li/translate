@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 authors = ["Lumen Translate Contributors"]
@@ -32,6 +32,8 @@ tts = "0.26"
 uiautomation = "0.25"
 rusqlite = { version = "0.35", features = ["bundled"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "http2"] }
+raw-window-handle = "0.6"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 # GPUI Kit re-exports matching gpui + gpui-component versions to avoid duplicate crate conflicts
 gpui-kit = "0.9"
