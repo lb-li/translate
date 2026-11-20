@@ -1,6 +1,7 @@
 use crate::icons;
 use crate::theme::{Palette, ThemeMode};
 use crate::tray::UiCommand;
+use core_storage::AppSettings;
 use core_translate::{contains_chinese, WordInfo};
 use core_tts::{HybridTtsEngine, TtsTier};
 use gpui_kit::component::scroll::ScrollableElement;
@@ -18,7 +19,7 @@ pub enum SpokenTarget {
     Translated,
 }
 
-fn icon(data: &'static [u8], size: f32, color: Rgba) -> impl IntoElement {
+pub(crate) fn icon(data: &'static [u8], size: f32, color: Rgba) -> impl IntoElement {
     svg().data(data).size(px(size)).text_color(color)
 }
 
@@ -38,6 +39,10 @@ pub struct TranslatorPopover {
     pub target_lang: String,
     pub is_pinned: bool,
     pub theme: ThemeMode,
+    pub(crate) settings: AppSettings,
+    pub(crate) show_settings: bool,
+    pub(crate) recording_hotkey: bool,
+    pub(crate) settings_error: Option<String>,
     status: ViewStatus,
     slow_tts: bool,
     copied: bool,
@@ -48,17 +53,20 @@ pub struct TranslatorPopover {
     anim_opacity: f32,
     waveform_tick: usize,
     waveform_running: bool,
+    streaming_frame: usize,
+    streaming_anim_running: bool,
     word_info: WordInfo,
     translation_scroll: ScrollHandle,
     focus_handle: FocusHandle,
     tts: Arc<HybridTtsEngine>,
-    cmd_tx: mpsc::UnboundedSender<UiCommand>,
+    pub(crate) cmd_tx: mpsc::UnboundedSender<UiCommand>,
 }
 
 impl TranslatorPopover {
     pub fn new(
         tts: Arc<HybridTtsEngine>,
         cmd_tx: mpsc::UnboundedSender<UiCommand>,
+        settings: AppSettings,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -66,13 +74,21 @@ impl TranslatorPopover {
             WindowAppearance::Dark | WindowAppearance::VibrantDark => ThemeMode::Dark,
             _ => ThemeMode::Light,
         };
+        let initial_hint = format!(
+            "划选文字后按 {}，译文会在这里出现。",
+            settings.hotkey.display()
+        );
         Self {
             source_text: String::new(),
-            translated_text: "划选文字后按 Alt + Q，译文会在这里出现。".to_string(),
+            translated_text: initial_hint,
             provider_key: String::new(),
             target_lang: "auto".to_string(),
             is_pinned: false,
             theme,
+            settings,
+            show_settings: false,
+            recording_hotkey: false,
+            settings_error: None,
             status: ViewStatus::Ready,
             slow_tts: false,
             copied: false,
@@ -83,6 +99,8 @@ impl TranslatorPopover {
             anim_opacity: 1.0,
             waveform_tick: 0,
             waveform_running: false,
+            streaming_frame: 0,
+            streaming_anim_running: false,
             word_info: WordInfo::default(),
             translation_scroll: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
@@ -99,6 +117,31 @@ impl TranslatorPopover {
 
     pub fn focus_window(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_handle.focus(window, cx);
+    }
+
+    pub fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_settings = true;
+        self.settings_error = None;
+        self.focus_window(window, cx);
+        cx.notify();
+    }
+
+    pub fn set_settings(
+        &mut self,
+        settings: AppSettings,
+        error: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings = settings;
+        self.settings_error = error;
+        self.recording_hotkey = false;
+        cx.notify();
+    }
+
+    pub fn show_settings_error(&mut self, error: String, cx: &mut Context<Self>) {
+        self.settings_error = Some(error);
+        self.recording_hotkey = false;
+        cx.notify();
     }
 
     pub fn show_ready_hint(&mut self, hint: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -135,6 +178,7 @@ impl TranslatorPopover {
         self.word_info = WordInfo::default();
         self.translation_scroll = ScrollHandle::new();
         self.focus_window(window, cx);
+        self.schedule_streaming_animation(cx);
         cx.notify();
     }
 
@@ -253,6 +297,29 @@ impl TranslatorPopover {
         .detach();
     }
 
+    fn schedule_streaming_animation(&mut self, cx: &mut Context<Self>) {
+        if self.streaming_anim_running || !self.settings.animations_enabled {
+            return;
+        }
+        self.streaming_anim_running = true;
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this_handle, cx| {
+            executor.timer(std::time::Duration::from_millis(180)).await;
+            let _ = this_handle.update(cx, |this, cx| {
+                this.streaming_anim_running = false;
+                if this.status == ViewStatus::Streaming
+                    && this.translated_text.is_empty()
+                    && this.settings.animations_enabled
+                {
+                    this.streaming_frame = this.streaming_frame.wrapping_add(1);
+                    this.schedule_streaming_animation(cx);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
     fn waveform(&self, palette: Palette) -> impl IntoElement {
         let speaking = self.last_spoken.is_some() && self.tts.is_speaking();
         let color = if speaking {
@@ -359,12 +426,29 @@ impl Render for TranslatorPopover {
             }
         }
 
-        let translated_content =
-            if self.translated_text.is_empty() && self.status == ViewStatus::Streaming {
+        let translated_element = if self.translated_text.is_empty()
+            && self.status == ViewStatus::Streaming
+            && self.settings.animations_enabled
+        {
+            div().flex().flex_col().gap(px(9.0)).pt(px(4.0)).children(
+                [238.0, 174.0, 112.0]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, width)| {
+                        let mut color = palette.accent;
+                        color.a = 0.10 + 0.10 * ((self.streaming_frame + index) % 3) as f32 / 2.0;
+                        div().w(px(width)).h(px(9.0)).rounded_full().bg(color)
+                    }),
+            )
+        } else {
+            let content = if self.translated_text.is_empty() && self.status == ViewStatus::Streaming
+            {
                 "正在等待译文…".to_string()
             } else {
                 self.translated_text.clone()
             };
+            div().child(content)
+        };
         let translated_color = if self.status == ViewStatus::Error {
             palette.error
         } else if self.translated_text.is_empty() {
@@ -375,6 +459,7 @@ impl Render for TranslatorPopover {
 
         div()
             .id("lumen-root")
+            .relative()
             .track_focus(&self.focus_handle)
             .flex()
             .flex_col()
@@ -388,6 +473,27 @@ impl Render for TranslatorPopover {
             .shadow_lg()
             .mt(px(self.anim_offset_y))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
+                if this.recording_hotkey {
+                    if event.keystroke.key == "escape" {
+                        this.recording_hotkey = false;
+                    } else if let Some(hotkey) = crate::hotkey::from_keystroke(&event.keystroke) {
+                        this.recording_hotkey = false;
+                        this.settings_error = None;
+                        let _ = this.cmd_tx.send(UiCommand::ApplyHotkey(hotkey));
+                    } else {
+                        this.settings_error =
+                            Some("请按下包含 Ctrl、Alt 或 Win 的有效组合键".to_string());
+                    }
+                    cx.notify();
+                    return;
+                }
+                if this.show_settings {
+                    if event.keystroke.key == "escape" {
+                        this.show_settings = false;
+                        cx.notify();
+                    }
+                    return;
+                }
                 match event.keystroke.key.as_str() {
                     "escape" => {
                         let _ = this.cmd_tx.send(UiCommand::HideToTray);
@@ -452,6 +558,37 @@ impl Render for TranslatorPopover {
                             .flex()
                             .items_center()
                             .gap(px(4.0))
+                            .child(
+                                div()
+                                    .id("open-settings")
+                                    .size(px(24.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(px(6.0))
+                                    .cursor_pointer()
+                                    .text_color(if self.show_settings {
+                                        palette.accent
+                                    } else {
+                                        palette.muted
+                                    })
+                                    .hover(|style| style.bg(palette.hover))
+                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                        this.show_settings = true;
+                                        this.recording_hotkey = false;
+                                        this.settings_error = None;
+                                        cx.notify();
+                                    }))
+                                    .child(icon(
+                                        icons::SETTINGS,
+                                        14.0,
+                                        if self.show_settings {
+                                            palette.accent
+                                        } else {
+                                            palette.muted
+                                        },
+                                    )),
+                            )
                             .child(
                                 div()
                                     .id("pin-window")
@@ -574,7 +711,7 @@ impl Render for TranslatorPopover {
                             .font_weight(FontWeight::MEDIUM)
                             .line_height(px(24.75))
                             .text_color(translated_color)
-                            .child(translated_content),
+                            .child(translated_element),
                     ),
             )
             .child(
@@ -735,5 +872,8 @@ impl Render for TranslatorPopover {
                             ),
                     ),
             )
+            .when(self.show_settings, |element| {
+                element.child(self.render_settings(cx))
+            })
     }
 }

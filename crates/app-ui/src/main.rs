@@ -1,14 +1,17 @@
 #![windows_subsystem = "windows"]
 
+mod hotkey;
 mod icons;
 mod popover;
+mod settings_view;
+mod startup;
 mod theme;
 pub mod tray;
 mod win_effects;
 pub mod win_positioning;
 
 use anyhow::Result;
-use core_storage::TranslationCache;
+use core_storage::{AppSettings, TranslationCache};
 use core_translate::providers::openai_compat::OpenAiCompatProvider;
 use core_translate::{
     is_english_word, GoogleTranslateFreeProvider, TranslateChunk, TranslateRequest,
@@ -57,19 +60,27 @@ fn acquire_single_instance() -> Option<bool> {
     Some(true)
 }
 
-fn play_open_animation(wh: WindowHandle<TranslatorPopover>, cx: &AsyncApp) {
+fn play_open_animation(wh: WindowHandle<TranslatorPopover>, cx: &AsyncApp, enabled: bool) {
     let mut cx_async = cx.clone();
     let executor = cx.background_executor().clone();
     cx.spawn(async move |_| {
-        for step in 1..=5 {
-            let progress = step as f32 / 5.0;
-            let ease = 1.0 - (1.0 - progress) * (1.0 - progress);
-            let opacity = 0.35 + 0.65 * ease;
-            let offset_y = (1.0 - ease) * 6.0;
+        if !enabled {
+            let _ = wh.update(&mut cx_async, |view, _window, cx| {
+                view.set_anim_step(1.0, 0.0, cx);
+            });
+            return;
+        }
+        for step in 1..=8 {
+            let progress = step as f32 / 8.0;
+            let c1 = 1.70158;
+            let c3 = c1 + 1.0;
+            let ease = 1.0 + c3 * (progress - 1.0).powi(3) + c1 * (progress - 1.0).powi(2);
+            let opacity = (0.35 + 0.65 * progress).min(1.0);
+            let offset_y = (1.0 - ease) * 8.0;
             let _ = wh.update(&mut cx_async, |view, _window, cx| {
                 view.set_anim_step(opacity, offset_y, cx);
             });
-            executor.timer(std::time::Duration::from_millis(16)).await;
+            executor.timer(std::time::Duration::from_millis(15)).await;
         }
     })
     .detach();
@@ -96,8 +107,14 @@ fn main() -> Result<()> {
         Some(provider) => Arc::new(provider),
         None => Arc::new(GoogleTranslateFreeProvider::new()),
     };
+    let settings = AppSettings::load().unwrap_or_default();
+    #[cfg(windows)]
+    if let Err(error) = startup::set_launch_at_startup(settings.launch_at_startup) {
+        tracing::warn!("同步开机启动项失败: {error}");
+    }
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<UiCommand>();
-    tray::spawn_tray_and_hotkey_thread(cmd_tx.clone());
+    let hotkey_controller =
+        tray::spawn_tray_and_hotkey_thread(cmd_tx.clone(), settings.hotkey.clone())?;
     let translation_generation = Arc::new(AtomicU64::new(0));
 
     gpui_kit::application()
@@ -133,7 +150,15 @@ fn main() -> Result<()> {
                                 }
                             }
                         }
-                        cx.new(|cx| TranslatorPopover::new(tts.clone(), cmd_tx.clone(), window, cx))
+                        cx.new(|cx| {
+                            TranslatorPopover::new(
+                                tts.clone(),
+                                cmd_tx.clone(),
+                                settings.clone(),
+                                window,
+                                cx,
+                            )
+                        })
                     },
                 )
                 .expect("无法创建 GPUI 浮窗");
@@ -155,6 +180,7 @@ fn main() -> Result<()> {
             let provider_clone = provider.clone();
             let tts_clone = tts.clone();
             let cmd_tx_bg = cmd_tx.clone();
+            let mut settings = settings;
             let mut target_lang = "auto".to_string();
             let mut capture_in_progress = false;
             let mut active_request: Option<tokio::task::JoinHandle<()>> = None;
@@ -174,13 +200,17 @@ fn main() -> Result<()> {
                                     win_positioning::hide_popover_to_tray(hwnd);
                                 } else {
                                     let _ = window_handle.update(cx, |view, window, cx| {
-                                        view.set_anim_step(0.35, 6.0, cx);
+                                        view.set_anim_step(0.35, 8.0, cx);
                                         view.focus_window(window, cx);
                                     });
                                     win_positioning::show_popover_near_cursor(
                                         hwnd, POPOVER_W, POPOVER_H,
                                     );
-                                    play_open_animation(window_handle, cx);
+                                    play_open_animation(
+                                        window_handle,
+                                        cx,
+                                        settings.animations_enabled,
+                                    );
                                 }
                             }
                         }
@@ -206,6 +236,69 @@ fn main() -> Result<()> {
                             if let Some(hwnd) = hwnd_opt {
                                 win_effects::apply_win11_popover_backdrop(hwnd, dark);
                             }
+                        }
+                        UiCommand::OpenSettings => {
+                            let _ = window_handle.update(cx, |view, window, cx| {
+                                view.open_settings(window, cx);
+                            });
+                            if let Some(hwnd) = hwnd_opt {
+                                win_positioning::show_popover_near_cursor(
+                                    hwnd, POPOVER_W, POPOVER_H,
+                                );
+                                play_open_animation(window_handle, cx, settings.animations_enabled);
+                            }
+                        }
+                        UiCommand::ApplyHotkey(hotkey) => {
+                            match hotkey_controller.update(hotkey.clone()) {
+                                Ok(()) => {
+                                    settings.hotkey = hotkey;
+                                    let error = settings.save().err().map(|error| {
+                                        format!("热键已生效，但设置保存失败：{error}")
+                                    });
+                                    let _ = window_handle.update(cx, |view, _window, cx| {
+                                        view.set_settings(settings.clone(), error, cx);
+                                    });
+                                }
+                                Err(error) => {
+                                    let _ = window_handle.update(cx, |view, _window, cx| {
+                                        view.show_settings_error(
+                                            format!("热键注册失败，已保留原热键：{error}"),
+                                            cx,
+                                        );
+                                    });
+                                }
+                            }
+                        }
+                        UiCommand::SetAutostart(enabled) => {
+                            match startup::set_launch_at_startup(enabled) {
+                                Ok(()) => {
+                                    settings.launch_at_startup = enabled;
+                                    let error = settings.save().err().map(|error| {
+                                        format!("自启动已更新，但设置保存失败：{error}")
+                                    });
+                                    let _ = window_handle.update(cx, |view, _window, cx| {
+                                        view.set_settings(settings.clone(), error, cx);
+                                    });
+                                }
+                                Err(error) => {
+                                    let _ = window_handle.update(cx, |view, _window, cx| {
+                                        view.show_settings_error(
+                                            format!("无法更新开机自启动：{error}"),
+                                            cx,
+                                        );
+                                    });
+                                }
+                            }
+                        }
+                        UiCommand::SetAnimationsEnabled(enabled) => {
+                            settings.animations_enabled = enabled;
+                            let error = settings
+                                .save()
+                                .err()
+                                .map(|error| format!("动效已更新，但设置保存失败：{error}"));
+                            let _ = window_handle.update(cx, |view, _window, cx| {
+                                view.set_settings(settings.clone(), error, cx);
+                            });
                         }
                         UiCommand::Quit => {
                             if let Some(handle) = active_request.take() {
@@ -234,13 +327,13 @@ fn main() -> Result<()> {
                             capture_in_progress = false;
                             if let Some(hwnd) = hwnd_opt {
                                 let _ = window_handle.update(cx, |view, window, cx| {
-                                    view.set_anim_step(0.35, 6.0, cx);
+                                    view.set_anim_step(0.35, 8.0, cx);
                                     view.focus_window(window, cx);
                                 });
                                 win_positioning::show_popover_near_cursor(
                                     hwnd, POPOVER_W, POPOVER_H,
                                 );
-                                play_open_animation(window_handle, cx);
+                                play_open_animation(window_handle, cx, settings.animations_enabled);
                             }
                             match captured {
                                 Some(result) if !result.cleaned_text.trim().is_empty() => {
@@ -250,8 +343,10 @@ fn main() -> Result<()> {
                                 _ => {
                                     let _ = window_handle.update(cx, |view, window, cx| {
                                         view.show_ready_hint(
-                                            "未检测到选中文本。请先划选文字，再按 Alt + Q。"
-                                                .to_string(),
+                                            format!(
+                                                "未检测到选中文本。请先划选文字，再按 {}。",
+                                                settings.hotkey.display()
+                                            ),
                                             window,
                                             cx,
                                         );
