@@ -22,55 +22,55 @@ pub static IS_PINNED: AtomicBool = AtomicBool::new(false);
 #[cfg(windows)]
 static MOUSE_CMD_TX: OnceLock<mpsc::UnboundedSender<UiCommand>> = OnceLock::new();
 
+#[cfg(windows)]
+const WM_LUMEN_HOTKEY_UPDATE: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 0x31;
+
+#[cfg(windows)]
+struct HotkeyUpdate {
+    settings: HotkeySettings,
+    result_tx: std::sync::mpsc::Sender<std::result::Result<HotkeySettings, String>>,
+}
+
 pub struct HotkeyController {
     #[cfg(windows)]
-    manager: Arc<GlobalHotKeyManager>,
+    update_tx: std::sync::mpsc::Sender<HotkeyUpdate>,
     #[cfg(windows)]
-    current: Mutex<HotKey>,
+    thread_id: u32,
+    #[cfg(windows)]
+    current: Arc<Mutex<HotKey>>,
     #[cfg(not(windows))]
     current: Mutex<HotkeySettings>,
 }
 
 impl HotkeyController {
+    #[cfg(not(windows))]
     pub fn new(initial: HotkeySettings) -> Result<Self> {
-        #[cfg(windows)]
-        {
-            let hotkey = crate::hotkey::to_hotkey(&initial)?;
-            let manager =
-                Arc::new(GlobalHotKeyManager::new().map_err(|error| anyhow!(error.to_string()))?);
-            manager
-                .register(hotkey)
-                .map_err(|error| anyhow!(error.to_string()))?;
-            Ok(Self {
-                manager,
-                current: Mutex::new(hotkey),
-            })
-        }
-        #[cfg(not(windows))]
-        {
-            Ok(Self {
-                current: Mutex::new(initial),
-            })
-        }
+        Ok(Self {
+            current: Mutex::new(initial),
+        })
     }
 
     pub fn update(&self, next: HotkeySettings) -> Result<()> {
         #[cfg(windows)]
         {
-            let next = crate::hotkey::to_hotkey(&next)?;
-            let mut current = self.current.lock().expect("hotkey lock poisoned");
-            let previous = *current;
-            self.manager
-                .unregister(previous)
+            use windows::Win32::Foundation::{LPARAM, WPARAM};
+            use windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW;
+
+            let (result_tx, result_rx) = std::sync::mpsc::channel();
+            self.update_tx
+                .send(HotkeyUpdate {
+                    settings: next,
+                    result_tx,
+                })
                 .map_err(|error| anyhow!(error.to_string()))?;
-            if let Err(error) = self.manager.register(next) {
-                self.manager
-                    .register(previous)
-                    .map_err(|rollback| anyhow!(rollback.to_string()))?;
-                return Err(anyhow!(error.to_string()));
+            unsafe {
+                PostThreadMessageW(self.thread_id, WM_LUMEN_HOTKEY_UPDATE, WPARAM(0), LPARAM(0))
             }
-            *current = next;
-            Ok(())
+            .map_err(|error| anyhow!(error.to_string()))?;
+            result_rx
+                .recv_timeout(std::time::Duration::from_secs(3))
+                .map_err(|error| anyhow!(error.to_string()))?
+                .map_err(|error| anyhow!(error))
         }
         #[cfg(not(windows))]
         {
@@ -78,11 +78,28 @@ impl HotkeyController {
             Ok(())
         }
     }
+}
 
-    #[cfg(windows)]
-    fn current_id(&self) -> u32 {
-        self.current.lock().expect("hotkey lock poisoned").id()
+#[cfg(windows)]
+fn apply_hotkey_update(
+    manager: &GlobalHotKeyManager,
+    current: &Arc<Mutex<HotKey>>,
+    settings: HotkeySettings,
+) -> std::result::Result<HotkeySettings, String> {
+    let next = crate::hotkey::to_hotkey(&settings).map_err(|error| error.to_string())?;
+    let mut current = current.lock().expect("hotkey lock poisoned");
+    let previous = *current;
+    manager
+        .unregister(previous)
+        .map_err(|error| error.to_string())?;
+    if let Err(error) = manager.register(next) {
+        manager
+            .register(previous)
+            .map_err(|rollback| rollback.to_string())?;
+        return Err(error.to_string());
     }
+    *current = next;
+    Ok(settings)
 }
 
 #[derive(Debug, Clone)]
@@ -197,11 +214,26 @@ pub fn spawn_tray_and_hotkey_thread(
     cmd_tx: mpsc::UnboundedSender<UiCommand>,
     initial_hotkey: HotkeySettings,
 ) -> Result<Arc<HotkeyController>> {
-    let controller = Arc::new(HotkeyController::new(initial_hotkey)?);
-    let thread_controller = controller.clone();
+    let (update_tx, update_rx) = std::sync::mpsc::channel();
+    let (init_tx, init_rx) = std::sync::mpsc::channel();
+    let current = Arc::new(Mutex::new(crate::hotkey::to_hotkey(&initial_hotkey)?));
+    let thread_current = current.clone();
     let _ = MOUSE_CMD_TX.set(cmd_tx.clone());
     std::thread::spawn(move || {
-        let hotkey_manager = thread_controller.manager.clone();
+        let hotkey_manager = match GlobalHotKeyManager::new() {
+            Ok(manager) => manager,
+            Err(error) => {
+                let _ = init_tx.send(Err(error.to_string()));
+                return;
+            }
+        };
+        let initial = *thread_current.lock().expect("hotkey lock poisoned");
+        if let Err(error) = hotkey_manager.register(initial) {
+            let _ = init_tx.send(Err(error.to_string()));
+            return;
+        }
+        let thread_id = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
+        let _ = init_tx.send(Ok(thread_id));
         let menu = Menu::new();
         let item_toggle = MenuItem::new("显示 / 隐藏浮窗", true, None);
         let item_settings = MenuItem::new("设置", true, None);
@@ -235,13 +267,13 @@ pub fn spawn_tray_and_hotkey_thread(
             }
         };
 
-        let event_controller = thread_controller.clone();
+        let event_current = thread_current.clone();
         let tx_hk = cmd_tx.clone();
         std::thread::spawn(move || {
             let rx = GlobalHotKeyEvent::receiver();
             while let Ok(event) = rx.recv() {
-                if event.id == event_controller.current_id() && event.state == HotKeyState::Pressed
-                {
+                let current_id = event_current.lock().expect("hotkey lock poisoned").id();
+                if event.id == current_id && event.state == HotKeyState::Pressed {
                     let _ = tx_hk.send(UiCommand::TriggerCapture);
                 }
             }
@@ -298,6 +330,13 @@ pub fn spawn_tray_and_hotkey_thread(
                 SetWindowsHookExW(WH_MOUSE_LL, Some(low_level_mouse_proc), None, 0).ok();
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                if msg.message == WM_LUMEN_HOTKEY_UPDATE {
+                    if let Ok(update) = update_rx.recv() {
+                        let result =
+                            apply_hotkey_update(&hotkey_manager, &thread_current, update.settings);
+                        let _ = update.result_tx.send(result);
+                    }
+                }
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
@@ -308,7 +347,15 @@ pub fn spawn_tray_and_hotkey_thread(
         drop(_tray_icon);
         drop(hotkey_manager);
     });
-    Ok(controller)
+    let thread_id = init_rx
+        .recv()
+        .map_err(|error| anyhow!(error.to_string()))?
+        .map_err(|error| anyhow!(error))?;
+    Ok(Arc::new(HotkeyController {
+        update_tx,
+        thread_id,
+        current,
+    }))
 }
 
 #[cfg(not(windows))]

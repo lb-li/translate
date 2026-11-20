@@ -24,7 +24,7 @@ pub fn set_launch_at_startup(enabled: bool) -> Result<()> {
         let status = RegOpenKeyExW(
             HKEY_CURRENT_USER,
             PCWSTR(subkey.as_ptr()),
-            0,
+            Some(0),
             KEY_SET_VALUE,
             &mut key,
         );
@@ -34,7 +34,7 @@ pub fn set_launch_at_startup(enabled: bool) -> Result<()> {
         let result = if enabled {
             let wide: Vec<u16> = value.encode_utf16().chain(std::iter::once(0)).collect();
             let bytes = std::slice::from_raw_parts(wide.as_ptr() as *const u8, wide.len() * 2);
-            RegSetValueExW(key, PCWSTR(name.as_ptr()), 0, REG_SZ, Some(bytes))
+            RegSetValueExW(key, PCWSTR(name.as_ptr()), Some(0), REG_SZ, Some(bytes))
         } else {
             RegDeleteValueW(key, PCWSTR(name.as_ptr()))
         };
