@@ -189,7 +189,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "app-ui"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "arboard",
@@ -1098,7 +1098,7 @@ dependencies = [
 
 [[package]]
 name = "core-capture"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "arboard",
@@ -1195,7 +1195,7 @@ dependencies = [
 
 [[package]]
 name = "core-storage"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "rusqlite",
@@ -1218,7 +1218,7 @@ dependencies = [
 
 [[package]]
 name = "core-translate"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1232,7 +1232,7 @@ dependencies = [
 
 [[package]]
 name = "core-tts"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "tracing",

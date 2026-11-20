@@ -1,4 +1,4 @@
-# Lumen Translate v0.3.5
+# Lumen Translate v0.3.6
 
 Lumen 是一款 Windows 11 原生划词翻译悬浮窗，使用 Rust、GPUI、DirectX 11 与 DirectWrite 构建。默认自动识别中文并译为英文、识别英文并译为中文，同时支持免 API Key 翻译、流式输出、Windows 原生语音、Light / Dark 主题、本地缓存和生词收藏。
 

@@ -71,6 +71,7 @@ impl HotkeyController {
                 .recv_timeout(std::time::Duration::from_secs(3))
                 .map_err(|error| anyhow!(error.to_string()))?
                 .map_err(|error| anyhow!(error))
+                .map(|_| ())
         }
         #[cfg(not(windows))]
         {
@@ -214,8 +215,8 @@ pub fn spawn_tray_and_hotkey_thread(
     cmd_tx: mpsc::UnboundedSender<UiCommand>,
     initial_hotkey: HotkeySettings,
 ) -> Result<Arc<HotkeyController>> {
-    let (update_tx, update_rx) = std::sync::mpsc::channel();
-    let (init_tx, init_rx) = std::sync::mpsc::channel();
+    let (update_tx, update_rx) = std::sync::mpsc::channel::<HotkeyUpdate>();
+    let (init_tx, init_rx) = std::sync::mpsc::channel::<std::result::Result<u32, String>>();
     let current = Arc::new(Mutex::new(crate::hotkey::to_hotkey(&initial_hotkey)?));
     let thread_current = current.clone();
     let _ = MOUSE_CMD_TX.set(cmd_tx.clone());
